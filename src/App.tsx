@@ -196,7 +196,12 @@ export default function App() {
     
     try {
         setAnalysisStep('Conectando con Spotify...');
-        const token = await getSpotifyToken();
+        
+        // Prioritize User Token if logged in, to avoid 403 Forbidden on personal playlists
+        let token = localStorage.getItem('spotify_access_token');
+        if (!token) {
+            token = await getSpotifyToken(); // Anonymous Client Credentials fallback
+        }
 
         let extractedSongs: Song[] = [];
 
