@@ -89,7 +89,7 @@ export default function App() {
   const loginWithSpotify = async () => {
       const clientId = import.meta.env.VITE_SPOTIFY_CLIENT_ID;
       const redirectUri = window.location.origin + '/';
-      const scopes = ['user-top-read'];
+      const scopes = ['user-top-read', 'playlist-read-private', 'playlist-read-collaborative'];
       
       if (!clientId || clientId === 'tu_cliente_id_aqui') {
           alert("Faltan credenciales de Spotify en tu archivo .env");
