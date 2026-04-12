@@ -70,9 +70,12 @@ export default function App() {
                       body: body.toString()
                     });
                     const data = await response.json();
+                    console.log('[DEBUG] Spotify token response:', { access_token: data.access_token ? 'present' : 'missing', scope: data.scope, error: data.error });
                     
                     if (data.access_token) {
                         localStorage.setItem('spotify_access_token', data.access_token);
+                        localStorage.setItem('spotify_token_scope', data.scope || '');
+                        console.log('[DEBUG] Scopes granted:', data.scope);
                         setPersonalToken(data.access_token);
                         fetchMyTopTracks(data.access_token);
                     } else {
