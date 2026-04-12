@@ -203,10 +203,14 @@ export default function App() {
     try {
         setAnalysisStep('Conectando con Spotify...');
         
-        // Prioritize User Token if logged in, to avoid 403 Forbidden on personal playlists
-        let token = localStorage.getItem('spotify_access_token');
+        // ONLY use the user PKCE token – anonymous Client Credentials can never read playlists
+        const token = localStorage.getItem('spotify_access_token');
+        console.log('[DEBUG] token from localStorage:', token ? 'FOUND ✓' : 'NULL – user not logged in');
+
         if (!token) {
-            token = await getSpotifyToken(); // Anonymous Client Credentials fallback
+            alert('⚠️ Tenés que iniciar sesión primero.\n\nHaz clic en el botón VERDE "Conectar con Spotify", autoriza la app, y después volvé a pegar el link.');
+            setIsAnalyzing(false);
+            return;
         }
 
         let extractedSongs: Song[] = [];
@@ -214,9 +218,10 @@ export default function App() {
         if (spotifyLink.includes('/playlist/')) {
             setAnalysisStep('Analizando playlist...');
             const playlistId = spotifyLink.split('/playlist/')[1].split('?')[0];
+            console.log('[DEBUG] Fetching playlist ID:', playlistId);
             extractedSongs = await fetchPlaylistTracks(token, playlistId);
         } else {
-            alert('Por favor inserta un link de Playlist válido o inicia sesión con tu cuenta.');
+            alert('Por favor inserta un link de Playlist válido. Ejemplo: https://open.spotify.com/playlist/...');
             setIsAnalyzing(false);
             return;
         }
@@ -234,7 +239,7 @@ export default function App() {
         setSongs(extractedSongs.slice(0, 50));
         setStep(2);
     } catch (error: any) {
-        console.error(error);
+        console.error('[DEBUG] Error:', error);
         alert(error.message || 'Ocurrió un error al conectar con Spotify.');
     } finally {
         setIsAnalyzing(false);
