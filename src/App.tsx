@@ -96,13 +96,16 @@ export default function App() {
           alert("Faltan credenciales de Spotify en tu archivo .env");
           return;
       }
+
+      // Limpiar token viejo para forzar uno nuevo con los permisos correctos
+      localStorage.removeItem('spotify_access_token');
       
       const verifier = generateRandomString(128);
       const challenge = await generateCodeChallenge(verifier);
       
       localStorage.setItem("spotify_verifier", verifier);
       
-      const authUrl = `https://accounts.spotify.com/authorize?client_id=${clientId}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scopes.join(' '))}&code_challenge_method=S256&code_challenge=${challenge}`;
+      const authUrl = `https://accounts.spotify.com/authorize?client_id=${clientId}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scopes.join(' '))}&code_challenge_method=S256&code_challenge=${challenge}&show_dialog=true`;
       window.location.href = authUrl;
   };
 
