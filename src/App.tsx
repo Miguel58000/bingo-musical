@@ -172,6 +172,11 @@ export default function App() {
       });
       const data = await response.json();
       
+      if (response.status === 403 || response.status === 401) {
+          localStorage.removeItem('spotify_access_token');
+          throw new Error('Tu sesión de Spotify expiró o no tiene permiso (Error 403/401). ¡Haz clic en el BOTÓN VERDE "Conectar con Spotify" para iniciar sesión de nuevo con los permisos correctos!');
+      }
+
       if (!response.ok || !data.items) {
           throw new Error('No se pudo encontrar la playlist. Asegúrate de que el link sea correcto y la playlist sea pública.');
       }
