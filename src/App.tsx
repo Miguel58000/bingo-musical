@@ -196,7 +196,7 @@ export default function App() {
         const token = localStorage.getItem('spotify_access_token');
 
         if (!token) {
-            alert('âš ï¸ TenÃ©s que iniciar sesiÃ³n primero.\n\nHaz clic en el botÃ³n VERDE "Conectar con Spotify", autoriza la app, y despuÃ©s volvÃ© a pegar el link.');
+            alert('⚠️ Tenés que iniciar sesión primero.\n\nHaz clic en el botón VERDE "Conectar con Spotify", autoriza la app, y después volvé a pegar el link.');
             setIsAnalyzing(false);
             return;
         }
