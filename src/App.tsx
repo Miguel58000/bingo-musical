@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Music, Users, Play, Download, Trash2, Plus, CheckCircle, Info, UserCheck } from 'lucide-react';
+import { Music, Users, Play, Download, Trash2, Plus, CheckCircle, UserCheck, Video, FileText, ClipboardPaste } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
 interface Song {
@@ -8,6 +8,8 @@ interface Song {
   name: string;
   artist: string;
 }
+
+type SourceTab = 'spotify' | 'Video' | 'manual';
 
 export default function App() {
   const [step, setStep] = useState(1);
@@ -21,7 +23,16 @@ export default function App() {
 
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisStep, setAnalysisStep] = useState('');
-  const [personalToken, setPersonalToken] = useState('');
+
+  
+  // Source tab
+  const [activeTab, setActiveTab] = useState<SourceTab>('spotify');
+  
+  // Video state
+  const [youtubeLink, setYoutubeLink] = useState('');
+  
+  // Manual bulk state
+  const [bulkText, setBulkText] = useState('');
 
   // PKCE Helper Functions
   const generateRandomString = (length: number) => {
@@ -70,13 +81,10 @@ export default function App() {
                       body: body.toString()
                     });
                     const data = await response.json();
-                    console.log('[DEBUG] Spotify token response:', { access_token: data.access_token ? 'present' : 'missing', scope: data.scope, error: data.error });
                     
                     if (data.access_token) {
                         localStorage.setItem('spotify_access_token', data.access_token);
                         localStorage.setItem('spotify_token_scope', data.scope || '');
-                        console.log('[DEBUG] Scopes granted:', data.scope);
-                        setPersonalToken(data.access_token);
                         fetchMyTopTracks(data.access_token);
                     } else {
                         alert("Error canjeando código de Spotify: " + (data.error_description || data.error));
@@ -149,30 +157,6 @@ export default function App() {
       }
   };
 
-  const getSpotifyToken = async () => {
-    const clientId = import.meta.env.VITE_SPOTIFY_CLIENT_ID;
-    const clientSecret = import.meta.env.VITE_SPOTIFY_CLIENT_SECRET;
-    
-    if (!clientId || !clientSecret || clientId === 'tu_cliente_id_aqui') {
-        throw new Error('Faltan credenciales de Spotify. Asegúrate de guardarlas en el archivo .env y reiniciar el servidor (npm run dev).');
-    }
-
-    const response = await fetch('https://accounts.spotify.com/api/token', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Authorization': 'Basic ' + btoa(clientId + ':' + clientSecret)
-        },
-        body: 'grant_type=client_credentials'
-    });
-
-    const data = await response.json();
-    if (!response.ok || !data.access_token) {
-        throw new Error(data.error_description || data.error || 'Error al obtener token de Spotify. Revisa tus credenciales en el archivo .env.');
-    }
-    return data.access_token;
-  };
-
   const fetchPlaylistTracks = async (token: string, playlistId: string) => {
       const response = await fetch(`https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=50`, {
           headers: { 'Authorization': `Bearer ${token}` }
@@ -209,12 +193,10 @@ export default function App() {
     try {
         setAnalysisStep('Conectando con Spotify...');
         
-        // ONLY use the user PKCE token – anonymous Client Credentials can never read playlists
         const token = localStorage.getItem('spotify_access_token');
-        console.log('[DEBUG] token from localStorage:', token ? 'FOUND ✓' : 'NULL – user not logged in');
 
         if (!token) {
-            alert('⚠️ Tenés que iniciar sesión primero.\n\nHaz clic en el botón VERDE "Conectar con Spotify", autoriza la app, y después volvé a pegar el link.');
+            alert('âš ï¸ TenÃ©s que iniciar sesiÃ³n primero.\n\nHaz clic en el botÃ³n VERDE "Conectar con Spotify", autoriza la app, y despuÃ©s volvÃ© a pegar el link.');
             setIsAnalyzing(false);
             return;
         }
@@ -224,16 +206,15 @@ export default function App() {
         if (spotifyLink.includes('/playlist/')) {
             setAnalysisStep('Analizando playlist...');
             const playlistId = spotifyLink.split('/playlist/')[1].split('?')[0];
-            console.log('[DEBUG] Fetching playlist ID:', playlistId);
             extractedSongs = await fetchPlaylistTracks(token, playlistId);
         } else {
-            alert('Por favor inserta un link de Playlist válido. Ejemplo: https://open.spotify.com/playlist/...');
+            alert('Por favor inserta un link de Playlist vÃ¡lido. Ejemplo: https://open.spotify.com/playlist/...');
             setIsAnalyzing(false);
             return;
         }
 
         if (extractedSongs.length === 0) {
-            alert('No se encontraron canciones. Asegúrate de tener al menos 25 y que sea pública.');
+            alert('No se encontraron canciones. AsegÃºrate de tener al menos 25 y que sea pÃºblica.');
             setIsAnalyzing(false);
             return;
         }
@@ -252,12 +233,250 @@ export default function App() {
     }
   };
 
+  // ==================== YouTube ====================
+
+  const extractYoutubeChannelId = async (link: string, apiKey: string): Promise<string> => {
+    // Handle: youtube.com/@handle
+    const handleMatch = link.match(/@([\w\-\.]+)/);
+    if (handleMatch) {
+      const handle = handleMatch[1];
+      const res = await fetch(`https://www.googleapis.com/youtube/v3/channels?part=id&forHandle=${handle}&key=${apiKey}`);
+      const data = await res.json();
+      if (data.items && data.items.length > 0) return data.items[0].id;
+      throw new Error(`No se encontró un canal con el handle @${handle}`);
+    }
+
+    // Handle: youtube.com/channel/UCxxxxxx
+    const channelIdMatch = link.match(/\/channel\/(UC[\w\-]+)/);
+    if (channelIdMatch) return channelIdMatch[1];
+
+    // Handle: youtube.com/c/ChannelName or youtube.com/user/Username
+    const userMatch = link.match(/\/(c|user)\/([\w\-]+)/);
+    if (userMatch) {
+      const res = await fetch(`https://www.googleapis.com/youtube/v3/channels?part=id&forUsername=${userMatch[2]}&key=${apiKey}`);
+      const data = await res.json();
+      if (data.items && data.items.length > 0) return data.items[0].id;
+      // Try search as fallback
+      const searchRes = await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&q=${userMatch[2]}&type=channel&maxResults=1&key=${apiKey}`);
+      const searchData = await searchRes.json();
+      if (searchData.items && searchData.items.length > 0) return searchData.items[0].snippet.channelId;
+      throw new Error(`No se encontró el canal "${userMatch[2]}"`);
+    }
+
+    throw new Error('No se pudo identificar el canal. Asegúrate de pegar un link válido de YouTube (ej: youtube.com/@CanalDeMusica)');
+  };
+
+  const extractYoutubePlaylistId = (link: string): string | null => {
+    const match = link.match(/[?&]list=([\w\-]+)/);
+    return match ? match[1] : null;
+  };
+
+  // Helper to clean and parse a YouTube video title into { name, artist }
+  const parseYoutubeTitle = (title: string, channelTitle: string): { name: string; artist: string } => {
+    const suffixClean = (s: string) => s
+      .replace(/\s*\(Official\s*(Music\s*)?Video\)/gi, '')
+      .replace(/\s*\[Official\s*(Music\s*)?Video\]/gi, '')
+      .replace(/\s*\(Lyric\s*Video\)/gi, '')
+      .replace(/\s*\[Lyric\s*Video\]/gi, '')
+      .replace(/\s*\(Audio\s*(Oficial)?\)/gi, '')
+      .replace(/\s*\[Audio\s*(Oficial)?\]/gi, '')
+      .replace(/\s*\(Video\s*Oficial\)/gi, '')
+      .replace(/\s*\[Video\s*Oficial\]/gi, '')
+      .replace(/\s*\(Official\s*Audio\)/gi, '')
+      .replace(/\s*\[Official\s*Audio\]/gi, '')
+      .replace(/\s*ft\.?\s*.+$/i, '')
+      .replace(/\s*feat\.?\s*.+$/i, '')
+      .trim();
+
+    if (title.includes(' - ')) {
+      const parts = title.split(' - ');
+      return {
+        artist: parts[0].trim(),
+        name: suffixClean(parts.slice(1).join(' - '))
+      };
+    }
+
+    return { name: suffixClean(title), artist: channelTitle };
+  };
+
+  // Build Song list from a batch of YouTube video detail items (snippet + statistics)
+  const buildSongsFromVideos = (items: any[]): (Song & { views: number })[] => {
+    const result: (Song & { views: number })[] = [];
+    for (const video of items) {
+      if (video.snippet?.categoryId === '10') {
+        const { name, artist } = parseYoutubeTitle(video.snippet.title, video.snippet.channelTitle);
+        result.push({
+          id: video.id,
+          name,
+          artist,
+          views: parseInt(video.statistics?.viewCount || '0', 10)
+        });
+      }
+    }
+    return result;
+  };
+
+  const fetchYoutubeSongs = async () => {
+    if (!youtubeLink.trim()) return;
+
+    const apiKey = import.meta.env.VITE_YOUTUBE_API_KEY;
+    if (!apiKey) {
+      alert('Falta la API Key de YouTube en el archivo .env (VITE_YOUTUBE_API_KEY)');
+      return;
+    }
+
+    setIsAnalyzing(true);
+
+    try {
+      const playlistId = extractYoutubePlaylistId(youtubeLink);
+      let withViews: (Song & { views: number })[] = [];
+
+      if (playlistId) {
+        // â”€â”€ PLAYLIST: fetch items then get stats â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        setAnalysisStep('Obteniendo videos de la playlist...');
+        let videoIds: string[] = [];
+        let nextPageToken = '';
+
+        do {
+          const url = `https://www.googleapis.com/youtube/v3/playlistItems?part=contentDetails&playlistId=${playlistId}&maxResults=50&key=${apiKey}${nextPageToken ? `&pageToken=${nextPageToken}` : ''}`;
+          const res = await fetch(url);
+          const data = await res.json();
+          if (data.error) throw new Error(data.error.message || 'Error al obtener la playlist de YouTube');
+          videoIds.push(...(data.items?.map((item: any) => item.contentDetails.videoId) || []));
+          nextPageToken = data.nextPageToken || '';
+        } while (nextPageToken && videoIds.length < 200);
+
+        if (videoIds.length === 0) throw new Error('No se encontraron videos en la playlist.');
+
+        setAnalysisStep(`Analizando ${videoIds.length} videos de la playlist...`);
+        for (let i = 0; i < videoIds.length; i += 50) {
+          const batch = videoIds.slice(i, i + 50);
+          const url = `https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics&id=${batch.join(',')}&key=${apiKey}`;
+          const res = await fetch(url);
+          const data = await res.json();
+          if (data.error) throw new Error(data.error.message);
+          withViews.push(...buildSongsFromVideos(data.items || []));
+        }
+
+      } else {
+        // â”€â”€ CHANNEL: use search ordered by viewCount â†’ most popular songs â”€â”€â”€â”€
+        setAnalysisStep('Identificando canal de YouTube...');
+        const channelId = await extractYoutubeChannelId(youtubeLink, apiKey);
+
+        setAnalysisStep('Buscando las canciones más reproducidas del canal...');
+
+        // search.list with order=viewCount + videoCategoryId=10 (Music)
+        // Each search.list call costs 100 quota units â€“ 2 pages = 200 units (within free tier)
+        let videoIds: string[] = [];
+        let nextPageToken = '';
+
+        do {
+          const url =
+            `https://www.googleapis.com/youtube/v3/search?part=id` +
+            `&channelId=${channelId}` +
+            `&type=video` +
+            `&videoCategoryId=10` +
+            `&order=viewCount` +
+            `&maxResults=50` +
+            `&key=${apiKey}` +
+            (nextPageToken ? `&pageToken=${nextPageToken}` : '');
+          const res = await fetch(url);
+          const data = await res.json();
+          if (data.error) throw new Error(data.error.message);
+          videoIds.push(...(data.items?.map((item: any) => item.id.videoId).filter(Boolean) || []));
+          nextPageToken = data.nextPageToken || '';
+        } while (nextPageToken && videoIds.length < 100);
+
+        if (videoIds.length === 0) {
+          throw new Error(
+            'No se encontraron videos de mÃºsica en este canal. ' +
+            'Puede que el canal no tenga videos categorizados como Música.'
+          );
+        }
+
+        setAnalysisStep(`Obteniendo info de ${videoIds.length} canciones más populares...`);
+        for (let i = 0; i < videoIds.length; i += 50) {
+          const batch = videoIds.slice(i, i + 50);
+          const url = `https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics&id=${batch.join(',')}&key=${apiKey}`;
+          const res = await fetch(url);
+          const data = await res.json();
+          if (data.error) throw new Error(data.error.message);
+          withViews.push(...buildSongsFromVideos(data.items || []));
+        }
+
+        // Already ordered by viewCount from search, but re-sort to be safe
+        withViews.sort((a, b) => b.views - a.views);
+      }
+
+      if (withViews.length === 0) {
+        throw new Error(
+          'No se encontraron canciones (categoría Música) en este canal/playlist. ' +
+          'Solo se importan videos marcados como "Música" en YouTube.'
+        );
+      }
+
+      setAnalysisStep(`✨ ${withViews.length} canciones encontradas, ordenadas por popularidad!`);
+      await new Promise(r => setTimeout(r, 900));
+
+      // Strip views before storing
+      setSongs(withViews.slice(0, 100).map(({ views: _views, ...song }) => song));
+      setStep(2);
+      
+    } catch (error: any) {
+      console.error('Video error:', error);
+      alert(error.message || 'Error al conectar con YouTube.');
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  // ==================== MANUAL BULK ====================
+  
+  const handleBulkAdd = () => {
+    if (!bulkText.trim()) return;
+    
+    const lines = bulkText
+      .split('\n')
+      .map(l => l.trim())
+      .filter(l => l.length > 0);
+    
+    const newSongs: Song[] = lines.map(line => {
+      // Support formats: "Song - Artist", "Song | Artist", "Song"
+      let name = line;
+      let artist = 'Artista Desconocido';
+      
+      if (line.includes(' - ')) {
+        const parts = line.split(' - ');
+        name = parts[0].trim();
+        artist = parts.slice(1).join(' - ').trim();
+      } else if (line.includes(' | ')) {
+        const parts = line.split(' | ');
+        name = parts[0].trim();
+        artist = parts.slice(1).join(' | ').trim();
+      }
+      
+      return {
+        id: Math.random().toString(36).substr(2, 9),
+        name,
+        artist
+      };
+    });
+    
+    setSongs(prev => [...prev, ...newSongs]);
+    setBulkText('');
+  };
+
+  const handleStartManual = () => {
+    // Jump directly to step 2 for manual management
+    setStep(2);
+  };
+
   const addManualSong = () => {
     if (!newSongName) return;
     const newSong: Song = {
       id: Math.random().toString(36).substr(2, 9),
       name: newSongName,
-      artist: newSongArtist || 'Unknown Artist'
+      artist: newSongArtist || 'Artista Desconocido'
     };
     setSongs([...songs, newSong]);
     setNewSongName('');
@@ -295,10 +514,14 @@ export default function App() {
   };
 
   const checkWinner = (board: string[]) => {
-      // Very simple check: does the board have any row/col/diag complete?
-      // For now, let's just count hits
       return board.filter(s => playedSongs.has(s)).length;
   };
+
+  const tabConfig: { key: SourceTab; label: string; icon: React.ReactNode; color: string }[] = [
+    { key: 'spotify', label: 'Spotify', icon: <Music size={18} />, color: '#1DB954' },
+    { key: 'Video', label: 'YouTube', icon: <Video size={18} />, color: '#FF0000' },
+    { key: 'manual', label: 'Manual', icon: <FileText size={18} />, color: '#a855f7' },
+  ];
 
   return (
     <div className="min-h-screen p-4 md:p-8">
@@ -324,7 +547,7 @@ export default function App() {
         <main>
             <AnimatePresence mode="wait">
                 
-                {/* Step 1: Link & Setup */}
+                {/* Step 1: Source Selection & Setup */}
                 {step === 1 && (
                     <motion.div 
                         key="step1"
@@ -341,46 +564,181 @@ export default function App() {
                                 </div>
                             ) : (
                                 <>
-                                    <div className="bg-white/5 p-6 rounded-2xl border border-[#1DB954]/30 text-center space-y-4">
-                                        <h3 className="text-xl font-bold flex items-center justify-center gap-2">
-                                            <UserCheck size={24} className="text-[#1DB954]" /> Jugar con tu perfil Real
-                                        </h3>
-                                        <p className="text-sm text-white/60">
-                                            Inicia sesión de forma segura y generaremos el bingo automáticamente basado en las canciones que más escuchaste últimamente.
-                                        </p>
-                                        <button 
-                                            onClick={loginWithSpotify}
-                                            className="w-full bg-[#1DB954] hover:bg-[#1ed760] text-black font-bold py-4 text-lg shadow-lg shadow-[#1DB954]/20 flex items-center justify-center gap-2"
+                                    {/* Tab Navigation */}
+                                    <div className="flex rounded-2xl bg-white/5 p-1.5 border border-white/10">
+                                      {tabConfig.map(tab => (
+                                        <button
+                                          key={tab.key}
+                                          onClick={() => setActiveTab(tab.key)}
+                                          className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-semibold transition-all duration-300"
+                                          style={{
+                                            background: activeTab === tab.key ? `${tab.color}22` : 'transparent',
+                                            color: activeTab === tab.key ? tab.color : 'rgba(255,255,255,0.5)',
+                                            border: activeTab === tab.key ? `1px solid ${tab.color}44` : '1px solid transparent',
+                                            boxShadow: activeTab === tab.key ? `0 0 20px ${tab.color}15` : 'none',
+                                          }}
                                         >
-                                            <Music size={20}/> Conectar con Spotify
+                                          {tab.icon} {tab.label}
                                         </button>
-                                    </div>
-                                    
-                                    <div className="flex items-center gap-4 py-2">
-                                        <div className="h-px bg-white/10 flex-1"></div>
-                                        <span className="text-white/40 text-sm font-semibold uppercase tracking-wider">O usar una playlist</span>
-                                        <div className="h-px bg-white/10 flex-1"></div>
+                                      ))}
                                     </div>
 
-                                    <div>
-                                        <label className="block text-sm font-semibold mb-2 flex items-center gap-2">
-                                            <Music size={16} /> Link de Playlist de Spotify
-                                        </label>
-                                        <div className="flex gap-2">
-                                            <input 
-                                                type="text" 
-                                                placeholder="https://open.spotify.com/playlist/..." 
-                                                value={spotifyLink}
-                                                onChange={(e) => setSpotifyLink(e.target.value)}
-                                            />
+                                    {/* Spotify Tab */}
+                                    <AnimatePresence mode="wait">
+                                    {activeTab === 'spotify' && (
+                                      <motion.div
+                                        key="tab-spotify"
+                                        initial={{ opacity: 0, y: 10 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        exit={{ opacity: 0, y: -10 }}
+                                        transition={{ duration: 0.2 }}
+                                        className="space-y-5"
+                                      >
+                                        <div className="bg-white/5 p-6 rounded-2xl border border-[#1DB954]/30 text-center space-y-4">
+                                            <h3 className="text-xl font-bold flex items-center justify-center gap-2">
+                                                <UserCheck size={24} className="text-[#1DB954]" /> Jugar con tu perfil Real
+                                            </h3>
+                                            <p className="text-sm text-white/60">
+                                                Inicia sesión de forma segura y generaremos el bingo automáticamente basado en las canciones que más escuchaste últimamente.
+                                            </p>
                                             <button 
-                                                onClick={handleFetchSongs}
-                                                className="bg-white/10 hover:bg-white/20 whitespace-nowrap px-6"
+                                                onClick={loginWithSpotify}
+                                                className="w-full bg-[#1DB954] hover:bg-[#1ed760] text-black font-bold py-4 text-lg shadow-lg shadow-[#1DB954]/20 flex items-center justify-center gap-2"
                                             >
-                                                Extraer
+                                                <Music size={20}/> Conectar con Spotify
                                             </button>
                                         </div>
-                                    </div>
+                                        
+                                        <div className="flex items-center gap-4 py-2">
+                                            <div className="h-px bg-white/10 flex-1"></div>
+                                            <span className="text-white/40 text-sm font-semibold uppercase tracking-wider">O usar una playlist</span>
+                                            <div className="h-px bg-white/10 flex-1"></div>
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-sm font-semibold mb-2 flex items-center gap-2">
+                                                <Music size={16} /> Link de Playlist de Spotify
+                                            </label>
+                                            <div className="flex gap-2">
+                                                <input 
+                                                    type="text" 
+                                                    placeholder="https://open.spotify.com/playlist/..." 
+                                                    value={spotifyLink}
+                                                    onChange={(e) => setSpotifyLink(e.target.value)}
+                                                />
+                                                <button 
+                                                    onClick={handleFetchSongs}
+                                                    className="bg-white/10 hover:bg-white/20 whitespace-nowrap px-6"
+                                                >
+                                                    Extraer
+                                                </button>
+                                            </div>
+                                        </div>
+                                      </motion.div>
+                                    )}
+
+                                    {/* Video Tab */}
+                                    {activeTab === 'Video' && (
+                                      <motion.div
+                                        key="tab-Video"
+                                        initial={{ opacity: 0, y: 10 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        exit={{ opacity: 0, y: -10 }}
+                                        transition={{ duration: 0.2 }}
+                                        className="space-y-5"
+                                      >
+                                        <div className="bg-white/5 p-6 rounded-2xl border border-red-500/30 space-y-4">
+                                          <h3 className="text-xl font-bold flex items-center justify-center gap-2 text-center">
+                                            <Video size={24} className="text-red-500" /> Importar desde YouTube
+                                          </h3>
+                                          <p className="text-sm text-white/60 text-center">
+                                            Pegá el link de un <strong>canal</strong> o <strong>playlist</strong> de YouTube. 
+                                            Solo se importarán los videos categorizados como <span className="text-red-400 font-semibold">Música</span>.
+                                          </p>
+                                          
+                                          <div>
+                                            <label className="block text-sm font-semibold mb-2 flex items-center gap-2">
+                                              <Video size={16} className="text-red-400" /> Link de YouTube
+                                            </label>
+                                            <div className="flex gap-2">
+                                              <input 
+                                                type="text"
+                                                placeholder="youtube.com/@Canal o youtube.com/playlist?list=..."
+                                                value={youtubeLink}
+                                                onChange={(e) => setYoutubeLink(e.target.value)}
+                                              />
+                                              <button 
+                                                onClick={fetchYoutubeSongs}
+                                                className="bg-red-600 hover:bg-red-500 text-white whitespace-nowrap px-6"
+                                              >
+                                                Importar
+                                              </button>
+                                            </div>
+                                          </div>
+
+                                          <div className="text-xs text-white/40 bg-white/5 rounded-xl p-3 space-y-1">
+                                            <p className="font-semibold text-white/60">Formatos aceptados:</p>
+                                            <p>• youtube.com/<strong>@NombreDeCanal</strong></p>
+                                            <p>• youtube.com/channel/<strong>UCxxxxxx</strong></p>
+                                            <p>• youtube.com/playlist?list=<strong>PLxxxxxx</strong></p>
+                                          </div>
+                                        </div>
+                                      </motion.div>
+                                    )}
+
+                                    {/* Manual Tab */}
+                                    {activeTab === 'manual' && (
+                                      <motion.div
+                                        key="tab-manual"
+                                        initial={{ opacity: 0, y: 10 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        exit={{ opacity: 0, y: -10 }}
+                                        transition={{ duration: 0.2 }}
+                                        className="space-y-5"
+                                      >
+                                        <div className="bg-white/5 p-6 rounded-2xl border border-purple-500/30 space-y-4">
+                                          <h3 className="text-xl font-bold flex items-center justify-center gap-2 text-center">
+                                            <ClipboardPaste size={24} className="text-purple-400" /> Carga Masiva de Canciones
+                                          </h3>
+                                          <p className="text-sm text-white/60 text-center">
+                                            Pegá tu lista de canciones, <strong>una por línea</strong>. 
+                                            Podés usar el formato <code className="bg-white/10 px-1.5 py-0.5 rounded text-purple-300">Canción - Artista</code> para separar.
+                                          </p>
+
+                                          <textarea
+                                            className="bulk-textarea"
+                                            rows={8}
+                                            placeholder={`Ejemplo:\nBohemian Rhapsody - Queen\nHotel California - Eagles\nBillie Jean - Michael Jackson\nSweet Child O' Mine - Guns N' Roses\nSmells Like Teen Spirit - Nirvana\n\n...o simplemente nombres de canciones`}
+                                            value={bulkText}
+                                            onChange={(e) => setBulkText(e.target.value)}
+                                          />
+
+                                          <div className="flex gap-3">
+                                            <button
+                                              onClick={handleBulkAdd}
+                                              disabled={!bulkText.trim()}
+                                              className="flex-1 bg-purple-600 hover:bg-purple-500 text-white font-bold py-3 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                                            >
+                                              <Plus size={18} /> Agregar {bulkText.trim() ? `${bulkText.split('\n').filter(l => l.trim()).length} canciones` : 'canciones'}
+                                            </button>
+                                            <button
+                                              onClick={handleStartManual}
+                                              className="bg-white/10 hover:bg-white/20 px-6 py-3"
+                                            >
+                                              Ir al editor â†’
+                                            </button>
+                                          </div>
+
+                                          {songs.length > 0 && (
+                                            <div className="text-sm text-green-400/80 bg-green-500/10 rounded-xl p-3 flex items-center gap-2">
+                                              <CheckCircle size={16} />
+                                              Ya tenés {songs.length} canciones cargadas. Podés seguir agregando o ir al editor.
+                                            </div>
+                                          )}
+                                        </div>
+                                      </motion.div>
+                                    )}
+                                    </AnimatePresence>
                                 </>
                             )}
 
@@ -417,36 +775,49 @@ export default function App() {
                             <h2 className="text-2xl font-bold mb-6 flex items-center gap-3">
                                 📋 Lista de Canciones ({songs.length})
                             </h2>
-                            
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
-                                {songs.map((song) => (
-                                    <div key={song.id} className="flex items-center justify-between p-3 bg-white/5 rounded-xl border border-white/10 group hover:bg-white/10 transition-all">
-                                        <div className="overflow-hidden">
-                                            <p className="font-bold truncate">{song.name}</p>
-                                            <p className="text-sm text-white/50 truncate">{song.artist}</p>
-                                        </div>
-                                        <button 
-                                            onClick={() => removeSong(song.id)}
-                                            className="text-white/30 hover:text-red-500 transition-colors p-2"
-                                        >
-                                            <Trash2 size={18} />
-                                        </button>
-                                    </div>
-                                ))}
-                            </div>
 
-                            <div className="flex flex-col md:flex-row gap-4 p-4 bg-white/5 rounded-2xl border border-dashed border-white/20">
+                            {songs.length === 0 && (
+                              <div className="text-center py-12 text-white/40 space-y-3">
+                                <Music size={48} className="mx-auto opacity-50" />
+                                <p className="text-lg font-semibold">No hay canciones todavía</p>
+                                <p className="text-sm">Agregá canciones manualmente abajo o volvé para importar desde Spotify/YouTube</p>
+                              </div>
+                            )}
+                            
+                            {songs.length > 0 && (
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+                                  {songs.map((song) => (
+                                      <div key={song.id} className="flex items-center justify-between p-3 bg-white/5 rounded-xl border border-white/10 group hover:bg-white/10 transition-all">
+                                          <div className="overflow-hidden">
+                                              <p className="font-bold truncate">{song.name}</p>
+                                              <p className="text-sm text-white/50 truncate">{song.artist}</p>
+                                          </div>
+                                          <button 
+                                              onClick={() => removeSong(song.id)}
+                                              className="text-white/30 hover:text-red-500 transition-colors p-2"
+                                          >
+                                              <Trash2 size={18} />
+                                          </button>
+                                      </div>
+                                  ))}
+                              </div>
+                            )}
+
+                            {/* Quick add individual */}
+                            <div className="flex flex-col md:flex-row gap-4 p-4 bg-white/5 rounded-2xl border border-dashed border-white/20 mb-4">
                                 <input 
                                     className="flex-1"
                                     placeholder="Nombre de la canción" 
                                     value={newSongName}
                                     onChange={(e) => setNewSongName(e.target.value)}
+                                    onKeyDown={(e) => e.key === 'Enter' && addManualSong()}
                                 />
                                 <input 
                                     className="flex-1"
                                     placeholder="Artista (Opcional)" 
                                     value={newSongArtist}
                                     onChange={(e) => setNewSongArtist(e.target.value)}
+                                    onKeyDown={(e) => e.key === 'Enter' && addManualSong()}
                                 />
                                 <button 
                                     onClick={addManualSong}
@@ -455,6 +826,30 @@ export default function App() {
                                     <Plus />
                                 </button>
                             </div>
+
+                            {/* Bulk paste area */}
+                            <details className="bg-white/5 rounded-2xl border border-white/10 overflow-hidden">
+                              <summary className="p-4 cursor-pointer font-semibold text-sm flex items-center gap-2 hover:bg-white/5 transition-colors">
+                                <ClipboardPaste size={16} className="text-purple-400" /> 
+                                Carga masiva (pegar muchas canciones de una vez)
+                              </summary>
+                              <div className="p-4 pt-0 space-y-3">
+                                <textarea
+                                  className="bulk-textarea"
+                                  rows={5}
+                                  placeholder="Una canción por línea. Formato: Canción - Artista"
+                                  value={bulkText}
+                                  onChange={(e) => setBulkText(e.target.value)}
+                                />
+                                <button
+                                  onClick={handleBulkAdd}
+                                  disabled={!bulkText.trim()}
+                                  className="w-full bg-purple-600 hover:bg-purple-500 text-white font-semibold py-3 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                                >
+                                  <Plus size={18} /> Agregar {bulkText.trim() ? `${bulkText.split('\n').filter(l => l.trim()).length} canciones` : 'todas'}
+                                </button>
+                              </div>
+                            </details>
                         </div>
 
                         <div className="flex gap-4">
@@ -564,7 +959,7 @@ export default function App() {
                                                     })}
                                                 </div>
 
-                                                {/* 5x5 Grid invencible con lineas duras */}
+                                                {/* 5x5 Grid */}
                                                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', background: 'white' }}>
                                                     {board.map((songName, sIdx) => {
                                                         const isPlayed = playedSongs.has(songName);
@@ -623,6 +1018,30 @@ export default function App() {
           background: rgba(255,255,255,0.2);
         }
 
+        .bulk-textarea {
+          width: 100%;
+          background: rgba(255, 255, 255, 0.03);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          border-radius: 12px;
+          padding: 1rem;
+          color: white;
+          font-size: 0.9rem;
+          font-family: 'Outfit', system-ui, sans-serif;
+          resize: vertical;
+          min-height: 100px;
+          line-height: 1.6;
+          box-sizing: border-box;
+          transition: border-color 0.3s;
+        }
+        .bulk-textarea:focus {
+          outline: none;
+          border-color: #a855f7;
+          background: rgba(255, 255, 255, 0.06);
+        }
+        .bulk-textarea::placeholder {
+          color: rgba(255, 255, 255, 0.25);
+        }
+
         @media print {
             @page {
                 size: A4 portrait;
@@ -673,3 +1092,4 @@ export default function App() {
     </div>
   );
 }
+
